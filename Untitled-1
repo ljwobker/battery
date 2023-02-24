@@ -1,0 +1,9 @@
+#!/usr/bin/python
+
+[
+    one,
+    two,
+    three
+] = ['one', 'two', 'three']
+
+print (two)

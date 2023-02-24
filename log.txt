@@ -1,0 +1,10 @@
+Module:  1      0.000v -   0.000v (  0.000v)   0.00c  current:  0.00a  SOC:  0.0%
+      Cell   1  0.000v   0.00c
+      Cell   2  0.000v   0.00c
+      Cell   3  0.000v   0.00c
+      Cell   4  0.000v   0.00c
+Module:  1      0.000v -   0.000v (  0.000v)   0.00c  current:  0.00a  SOC:  0.0%
+      Cell   1  0.000v   0.00c
+      Cell   2  0.000v   0.00c
+      Cell   3  0.000v   0.00c
+      Cell   4  0.000v   0.00c
