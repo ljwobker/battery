@@ -5,7 +5,14 @@ import serial, serial.rs485
 import threading, logging, time
 from decimal import *
 import vcmd
-from time import sleep
+import time
+import datetime
+import batt_influx
+from dotenv import load_dotenv
+import os
+
+
+
 
 logging.basicConfig(
      level=logging.INFO,
@@ -87,15 +94,11 @@ class vSystem:
     # we start with hardware rs485.. self.wakeBMS will change it to software if hardware has problems.
     rsfunc = serial.Serial
 
-
-
     def send(self, b):
         buf = b + self.crc(b).to_bytes(2, byteorder='little') + b'\r\n'
         self.ser.write(buf)
 
-
     def __init__(self, seriesModules, parallelStrings, serialPort):
-
         self.sModules = seriesModules
         self.pStrings = parallelStrings
         self.serialPort = serialPort
@@ -110,7 +113,6 @@ class vSystem:
         self.sthread = threading.Thread(target=self.serialThread, daemon=True)
         self.sthread.start()
 
-
     def payload(self, b):
         p = b[:-4]
         if self.crc(p).to_bytes(2, byteorder='little') == b[-4:-2]:
@@ -124,49 +126,11 @@ class vSystem:
         seg = self.ser.read(vcmd.cmds[cmdNum]['rlen'])
         return self.payload(seg)
 
-
     def signed(self,i):
         # converts unsigned word to signed word.
         if i > 32768:
             return i - 65536
         return i
-
-
-    def printStats(self, format='text'):
-
-        m = 0
-        self.dataLock.acquire()
-    
-        if format == 'csv':
-            for mod in self.modules:
-                m += 1
-                outrow = [mod.moduleID,mod.soc,mod.moduleVoltage,mod.moduleUCVoltage,sum(mod.cellVoltage),mod.moduleTemp,mod.current]
-                fmts = ['2.0f','3.2f','2.2f','2.2f','2.2f','2.1f','2.2f']
-                for cell in range(0,4):
-                    outrow = outrow + [mod.cellVoltage[cell],mod.cellTemp[cell]]
-                    if mod.cellBalStatus[cell]:
-                        outrow.append(1)
-                    else:
-                        outrow.append(0)
-                    fmts = fmts + ['1.2f','2.1f','1.0f']
-                outstr = ','.join( [f'{v:{f}}' for v,f in zip(outrow,fmts)]  )
-                if (mod.moduleVoltage > 1):
-                    print(outstr)
-
-        else: 
-            for module in self.modules:
-                m += 1
-                print('Module:%3d    %7.3fv - %7.3fv (%7.3fv)  %5.2fc  current: %5.2fa  SOC: %4.1f%%' % (module.moduleID,module.moduleVoltage,module.moduleUCVoltage,sum(module.cellVoltage),module.moduleTemp,module.current,module.soc))
-
-                for cell in range(0,4):
-                    cellLine = '      Cell %3d  %5.3fv  %5.2fc' % (cell+1+((m-1)*4), module.cellVoltage[cell],module.cellTemp[cell])
-                    if module.cellBalStatus[cell] == 1:
-                        cellLine += " (Balancing) "
-                    print(cellLine)
-    
-        self.dataLock.release()
-
-
 
     def wakeBMS(self):
         # first, knock knock.
@@ -263,16 +227,107 @@ class vSystem:
                 # Trigger new system data event
                 self.newSysData.set()
 
+    def printStats(self, format='text'):
+
+        m = 0
+        self.dataLock.acquire()
+        if format == 'csv':
+            self.moduleReadings = {}
+            for mod in self.modules:
+                m += 1
+                self.outrow = [time.time(),mod.moduleID,mod.soc,mod.moduleVoltage,mod.moduleUCVoltage,sum(mod.cellVoltage),mod.moduleTemp,mod.current]
+                self.keynames = ['time','moduleID','soc','moduleVoltage','moduleUCVoltage','sumCellVoltage','moduleTemp','current']
+                self.fmts = ['10.6f','2.0f','3.2f','2.2f','2.2f','2.2f','2.1f','2.2f']
+                for cell in range(0,4):
+                    self.outrow = self.outrow + [mod.cellVoltage[cell],mod.cellTemp[cell]]
+                    if mod.cellBalStatus[cell]:
+                        self.outrow.append(1)
+                    else:
+                        self.outrow.append(0)
+                    self.fmts = self.fmts + ['1.2f','2.1f','1.0f']
+                    self.keynames = self.keynames + [f'cellVoltage_{cell}', f'cellTemp_{cell}', f'Balancing_{cell}']
+                self.outstr = ','.join( [f'{v:{f}}' for v,f in zip(self.outrow,self.fmts)]  )
+                if (mod.moduleVoltage > 1):
+                    print(','.join(self.keynames))
+                    print(self.outstr)
+                
+                    self.moduleReadings[mod.moduleID] = {k:v for (k,v) in zip(self.keynames[2:], self.outrow[2:])}
+                    self.moduleReadings[mod.moduleID]['time'] = time.time()
+                    pass
+
+
+
+        else: 
+            for module in self.modules:
+                m += 1
+                print('Module:%3d    %7.3fv - %7.3fv (%7.3fv)  %5.2fc  current: %5.2fa  SOC: %4.1f%%' % (module.moduleID,module.moduleVoltage,module.moduleUCVoltage,sum(module.cellVoltage),module.moduleTemp,module.current,module.soc))
+
+                for cell in range(0,4):
+                    cellLine = '      Cell %3d  %5.3fv  %5.2fc' % (cell+1+((m-1)*4), module.cellVoltage[cell],module.cellTemp[cell])
+                    if module.cellBalStatus[cell] == 1:
+                        cellLine += " (Balancing) "
+                    print(cellLine)
+    
+        self.dataLock.release()
+
+
+    def writeToInflux(self, fluxClient):
+        #build a data point
+        
+        good_data = [{
+            "measurement": "h2o_feet",
+            "tags": {"location": "coyote_creek"},
+            "fields": {"water_level": 1, "poop_amount": 'low'},
+            # "time": 1,
+            }]
+
+        for (moduleID)  in self.moduleReadings:
+            fields = {}
+            for (k,v) in self.moduleReadings[moduleID].items():
+                if isinstance(v, Decimal):
+                    v = float(v)
+                fields[k] = v
+            fields.pop('time')
+            my_data = [{
+                "measurement": "Battery_Data",
+                "tags": {"moduleID": moduleID},
+                "fields": fields,
+
+                # "time": 1,
+                }]
+
+
+
+        fluxClient.write_data(my_data)
+
+
+            
+        # write it
+
+
+        pass
+
+
+
+
+
 
 if __name__ == '__main__':
     sys = vSystem(1, 2, '/dev/ttyUSB0')
+    load_dotenv()
+    token = os.getenv('IFDB_TOKEN')
+    org = os.getenv('IFDB_ORG')
+    bucket = os.getenv('IFDB_BUCKET')
+    fluxClient = batt_influx.InfluxClient(token, org, bucket)
+
     while True:
         # print('hi.')
         sys.newSysData.wait()
         sys.newSysData.clear()
         sys.printStats(format='text')
         sys.printStats(format='csv')
-        sleep(30)
+        sys.writeToInflux(fluxClient)
+        time.sleep(30)
 
 
 
