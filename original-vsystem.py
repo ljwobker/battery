@@ -1,21 +1,10 @@
-#!/usr/bin/python 
+#!/usr/bin/env python3
 
 import crcmod
 import serial, serial.rs485
 import threading, logging, time
 from decimal import *
 import vcmd
-import time
-import datetime
-import batt_influx
-from dotenv import load_dotenv
-import os
-import argparse
-import sys
-
-
-
-
 
 logging.basicConfig(
      level=logging.INFO,
@@ -79,7 +68,7 @@ class vModule:
             return True
         return False
 
-    # @property
+    # @proprety
     # def maxV(self):
     #     return max(self.cellVoltage)
 
@@ -97,11 +86,15 @@ class vSystem:
     # we start with hardware rs485.. self.wakeBMS will change it to software if hardware has problems.
     rsfunc = serial.Serial
 
+
+
     def send(self, b):
         buf = b + self.crc(b).to_bytes(2, byteorder='little') + b'\r\n'
         self.ser.write(buf)
 
+
     def __init__(self, seriesModules, parallelStrings, serialPort):
+
         self.sModules = seriesModules
         self.pStrings = parallelStrings
         self.serialPort = serialPort
@@ -116,12 +109,12 @@ class vSystem:
         self.sthread = threading.Thread(target=self.serialThread, daemon=True)
         self.sthread.start()
 
+
     def payload(self, b):
         p = b[:-4]
         if self.crc(p).to_bytes(2, byteorder='little') == b[-4:-2]:
             p = b[3:-4]
             n = 2
-
             return [int.from_bytes(p[i:i+n],'big') for i in range(0, len(p), n)]
 
     def runCmd(self,module,cmdNum):
@@ -129,11 +122,27 @@ class vSystem:
         seg = self.ser.read(vcmd.cmds[cmdNum]['rlen'])
         return self.payload(seg)
 
+
     def signed(self,i):
         # converts unsigned word to signed word.
         if i > 32768:
             return i - 65536
         return i
+
+
+    def printStats(self):
+        m = 0
+        self.dataLock.acquire()
+        for module in self.modules:
+            m += 1
+            print('Module:%3d    %7.3fv - %7.3fv (%7.3fv)  %5.2fc  current: %5.2fa  SOC: %4.1f%%' % (module.moduleID,module.moduleVoltage,module.moduleUCVoltage,sum(module.cellVoltage),module.moduleTemp,module.current,module.soc))
+
+            for cell in range(0,4):
+                cellLine = '      Cell %3d  %5.3fv  %5.2fc' % (cell+1+((m-1)*4), module.cellVoltage[cell],module.cellTemp[cell])
+                if module.cellBalStatus[cell] == 1:
+                    cellLine += " (Balancing) "
+                print(cellLine)
+        self.dataLock.release()
 
     def wakeBMS(self):
         # first, knock knock.
@@ -231,132 +240,14 @@ class vSystem:
                 self.newSysData.set()
 
 
-    def getModById (self, idnumber) -> vModule:
-        for module in self.modules:
-            if module.moduleID == idnumber:
-                return module
-        raise ValueError(f"module with ID number {idnumber} not found in this system!")
-
-
-    def asDict(self, findMe, formats=False) -> dict:
-        """
-        return the module reading values as a dict.  if formats=True, returns a tuple of the 
-        values and a dictionary of the print formats for convenience.
-        If formats = False, returns only the reading values dictionary.
-        """
-        mod = self.getModById(findMe)  # find the matching moduleID
-        keynames = ['moduleID','soc','moduleVoltage','moduleUCVoltage','sumCellVoltage','moduleTemp','current']        
-        datafields = [mod.moduleID,mod.soc,mod.moduleVoltage,mod.moduleUCVoltage,sum(mod.cellVoltage),mod.moduleTemp,mod.current]
-        print_fmts = ['2.0f','3.2f','2.2f','2.2f','2.2f','2.1f','2.2f']
-        out_d = { k:v for (k,v) in zip(keynames, datafields) }
-        out_fmts = { k:v for (k,v) in zip(keynames, print_fmts) }
-        for cell in range(0,4):
-            out_fmts[f'cellVoltage_{cell}'] = '1.2f'
-            out_fmts[f'cellTemp_{cell}'] = '2.1f'
-            out_fmts[f'Balancing_{cell}'] = '1.0f'
-            out_d[f'cellVoltage_{cell}'] = mod.cellVoltage[cell]
-            out_d[f'cellTemp_{cell}'] = mod.cellTemp[cell]
-            if mod.cellBalStatus[cell]:   
-                out_d[f'Balancing_{cell}'] = 1
-            else:
-                out_d[f'Balancing_{cell}'] = 0
-        
-        assert len(out_fmts) == len(out_d), f"values dict and print formats dict must be same length!"
-        if formats:
-            return(out_d, out_fmts)
-        else:
-            return(out_d)
-
-
-
-    def printStats(self, format='text'):
-
-        self.dataLock.acquire()
-
-        if format == 'csv':
-            for mod in [m for m in self.modules if m.moduleVoltage > 1]:
-                outstr = []
-                print(f"moduleID is {mod.moduleID}")
-
-                (val_strings, fmt_strings) = self.asDict(mod.moduleID, formats=True)
-                for key in val_strings:
-                    outstr.append(f'{val_strings[key]:{fmt_strings[key]}}')
-                print(outstr)
-                
-
-        if format == 'text': 
-            m = 0
-            for module in self.modules:
-                m += 1
-                print('Module:%3d    %7.3fv - %7.3fv (%7.3fv)  %5.2fc  current: %5.2fa  SOC: %4.1f%%' % (module.moduleID,module.moduleVoltage,module.moduleUCVoltage,sum(module.cellVoltage),module.moduleTemp,module.current,module.soc))
-                for cell in range(0,4):
-                    cellLine = '      Cell %3d  %5.3fv  %5.2fc' % (cell+1+((m-1)*4), module.cellVoltage[cell],module.cellTemp[cell])
-                    if module.cellBalStatus[cell] == 1:
-                        cellLine += " (Balancing) "
-                    print(cellLine)
-    
-        self.dataLock.release()
-
-
-
-
-    def writeToInflux(self, fluxClient):
-        self.dataLock.acquire()
-       
-        for vMod in self.modules:
-            mod_dict = self.asDict(vMod.moduleID)
-            fields = {}
-            for (k,v) in mod_dict.items():
-                if isinstance(v, Decimal):
-                    v = float(v)
-                fields[k] = v
-
-            reading_data = [{
-                "measurement": "Battery_Data",
-                "tags": {"moduleTag": str(mod_dict['moduleID'])},
-                "fields": fields,
-                }]
-
-            fluxClient.write_data(reading_data)
-        self.dataLock.release()
-
-
-
-
-def parseArgs():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--time_interval", type=int, default=10, help="seconds between subsequent runs")
-    parser.add_argument("-n", "--num_runs", type=int, default=4, help="number of runs to execute")
-    if len(sys.argv)==1:
-        parser.print_help(sys.stderr)
-        # sys.exit(1)
-    return parser.parse_args()
-
-
-
-
-
 if __name__ == '__main__':
-    args = parseArgs()
-    sys = vSystem(1, 2, '/dev/ttyUSB0')
-    load_dotenv()
-    token = os.getenv('IFDB_TOKEN')
-    org = os.getenv('IFDB_ORG')
-    bucket = os.getenv('IFDB_BUCKET')
-    fluxClient = batt_influx.InfluxClient(token, org, bucket)
-
-
-    run_num = 0
+    sys = vSystem(1,2,'/dev/ttyUSB0')
+    # sys = vSystem(4, 2, '/dev/ttyUSB0')
     while True:
-        run_num += 1
+        #print('hi.')
         sys.newSysData.wait()
         sys.newSysData.clear()
-        sys.printStats(format='csv')
-        # sys.writeToInflux(fluxClient)
-        if run_num < args.num_runs:
-            time.sleep(args.time_interval)
-        else:
-            break
+        sys.printStats()
+        time.sleep(1)
 
 
-    
