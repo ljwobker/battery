@@ -13,12 +13,12 @@ with serial.Serial('/dev/ttyUSB1', baudrate=115200, timeout=1) as ser:
     get_values_str = b':R50=1,2,1,\n'
     output_on_str = b':W10=1,2,1,\n'
     output_off_str = b':W10=1,0,0,\n'
-    
-    for n in range(1000000000):
+
+
+    for n in range(100):
         ser.write(get_values_str)
-        # ser.write(output_on_str)
         print(ser.readline())
-        sleep(5)
+        sleep(10)
 
 
     # ser.write(output_off_str)
