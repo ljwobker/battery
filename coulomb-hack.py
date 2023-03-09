@@ -11,45 +11,32 @@ from time import sleep
 import argparse
 
 
-
-
-print("hi")
-
-def writeToInflux(self, fluxClient):
-    self.dataLock.acquire()
+def writeToInflux(kg_reading, fluxClient):
     
-    for vMod in self.modules:
-        mod_dict = self.asDict(vMod.moduleID)
-        fields = {}
-        for (k,v) in mod_dict.items():
-            fields[k] = v
+    fields = {}
+    for (k,v) in kg_reading.items():
+        fields[k] = v
 
-        reading_data = [{
-            "measurement": "Battery_Data",
-            "tags": {"moduleTag": str(mod_dict['moduleID'])},
-            "fields": fields,
-            }]
+    reading_data = [{
+        "measurement": "Meter Readings",
+        "tags": {"moduleTag": 'meter1'},
+        "fields": fields,
+        }]
 
-        fluxClient.write_data(reading_data)
-    self.dataLock.release()
-
-print("hi")
+    fluxClient.write_data(reading_data)
 
 def parseArgs():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--time_interval", type=int, default=10, help="seconds between subsequent runs")
+    parser.add_argument("-t", "--time_interval", type=int, default=1, help="seconds between subsequent runs")
     parser.add_argument("-n", "--num_runs", type=int, default=4, help="number of runs to execute")
     if len(sys.argv)==1:
         parser.print_help(sys.stderr)
         # sys.exit(1)
     return parser.parse_args()
-print("hi")
 
-def getReading(cmdstring=b':R50=1,2,1,\n', dev='/dev/TTYUSB1'):
+def getReading(cmdstring=b':R50=1,2,1,\n', dev='/dev/ttyUSB1'):
     with serial.Serial(dev, baudrate=115200, timeout=1) as ser:
-        # for line in range(10):
-        #     x = ser.readline()
-        #     print(x)
+
         status_check_str = b':R00=1,2,1,\n'
         get_values_str = b':R50=1,2,1,\n'
         output_on_str = b':W10=1,2,1,\n'
@@ -57,9 +44,9 @@ def getReading(cmdstring=b':R50=1,2,1,\n', dev='/dev/TTYUSB1'):
 
         ser.write(cmdstring)
         reading = ser.readline()
-        return reading
+    return reading
 
-print("hi")
+
 
 if __name__ == '__main__':
     print("hi")
@@ -74,9 +61,9 @@ if __name__ == '__main__':
     run_num = 0
     while True:
         run_num += 1
-        ## get_data
         reading = getReading()
-        print(reading)
+        kg_Reading = KgfR50(reading)
+        writeToInflux(kg_Reading.asDict(), fluxClient)
         if run_num < args.num_runs:
             sleep(args.time_interval)
         else:
