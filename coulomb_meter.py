@@ -2,7 +2,6 @@
 
 from prettytable import PrettyTable
 
-
 class KgfR50:
     def __init__(self, input_bytestr) -> None:
         # decode to string
@@ -58,9 +57,6 @@ class KgfR50:
         return str(ptable)
 
 
-
-
-
 class KgfSettings:
     def __init__(self, input_bytestr) -> None:
         # decode to string
@@ -71,7 +67,14 @@ class KgfSettings:
         self.checksum = int(self.reading[1])                # CRC8 I think
         self.voltage = float(self.reading[2]) / 100         # volts
 
-        
+
+known_command_strings = {
+    'status_check_str' : b':R00=1,2,1,\n',
+    'get_values_str' : b':R50=1,2,1,\n',
+    'output_on_str' : b':W10=1,2,1,\n',
+    'output_off_str' : b':W10=1,0,0,\n',
+    'output_off_str' : b':W10=1,0,0,\n',
+}        
 
 
 # sample_50 = b':r50=1,233,1349,19,90000,87862,122559,137818,79,0,0,1,0,30000,\r\n'
