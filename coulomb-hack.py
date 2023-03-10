@@ -34,39 +34,41 @@ def parseArgs():
         # sys.exit(1)
     return parser.parse_args()
 
-def getReading(cmdstring=b':R50=1,2,1,\n', dev='/dev/ttyUSB1'):
-    with serial.Serial(dev, baudrate=115200, timeout=1) as ser:
 
-        status_check_str = b':R00=1,2,1,\n'
-        get_values_str = b':R50=1,2,1,\n'
-        output_on_str = b':W10=1,2,1,\n'
-        output_off_str = b':W10=1,0,0,\n'
+def getReading(cmdstring, conn):
+    conn.write(cmdstring)
+    return conn.readline()
 
-        ser.write(cmdstring)
-        reading = ser.readline()
-    return reading
+
+# def getReading(cmdstring=b':R50=1,2,1,\n', dev='/dev/ttyUSB1'):
+#     with serial.Serial(dev, baudrate=115200, timeout=1) as ser:
+
+#         status_check_str = b':R00=1,2,1,\n'
+#         get_values_str = b':R50=1,2,1,\n'
+#         output_on_str = b':W10=1,2,1,\n'
+#         output_off_str = b':W10=1,0,0,\n'
+
+#         ser.write(cmdstring)
+#         reading = ser.readline()
+#     return reading
 
 
 
 if __name__ == '__main__':
-    print("hi")
     args = parseArgs()
-    load_dotenv()
-    token = os.getenv('IFDB_TOKEN')
-    org = os.getenv('IFDB_ORG')
-    bucket = os.getenv('IFDB_BUCKET')
-    fluxClient = InfluxClient(token, org, bucket)
-
-
+    fluxClient = InfluxClient.getClientHandle()
     run_num = 0
-    while True:
-        run_num += 1
-        reading = getReading()
-        kg_Reading = KgfR50(reading)
-        writeToInflux(kg_Reading.asDict(), fluxClient)
-        if run_num < args.num_runs:
-            sleep(args.time_interval)
-        else:
-            break
+
+    with serial.Serial(port='/dev/ttyUSB1', baudrate=115200, timeout=1, exclusive=True) as conn:
+        while True:
+            run_num += 1
+            reading = getReading(cmdstring=b':R50=1,2,1,\n', conn=conn)
+            kg_Reading = KgfR50(reading)
+            writeToInflux(kg_Reading.asDict(), fluxClient)
+            print(kg_Reading.asCSV())
+            if run_num < args.num_runs:
+                sleep(args.time_interval)
+            else:
+                break
 
 exit()

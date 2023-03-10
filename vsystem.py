@@ -6,12 +6,12 @@ import threading, logging, time
 from decimal import *
 import vcmd
 import time
-import datetime
 import batt_influx
 from dotenv import load_dotenv
 import os
 import argparse
 import sys
+from prettytable import PrettyTable
 
 
 
@@ -148,6 +148,7 @@ class vSystem:
                              xonxoff=False,
                              rtscts=False,
                              dsrdtr=False,
+                             exclusive=True,
                              ) as ser:
                 ser.rs485_mode = serial.rs485.RS485Settings()
                 ser.write(vcmd.startBatteries)
@@ -230,13 +231,11 @@ class vSystem:
                 # Trigger new system data event
                 self.newSysData.set()
 
-
     def getModById (self, idnumber) -> vModule:
         for module in self.modules:
             if module.moduleID == idnumber:
                 return module
         raise ValueError(f"module with ID number {idnumber} not found in this system!")
-
 
     def asDict(self, findMe, formats=False) -> dict:
         """
@@ -267,23 +266,16 @@ class vSystem:
         else:
             return(out_d)
 
-
-
     def printStats(self, format='text'):
-
         self.dataLock.acquire()
-
         if format == 'csv':
             for mod in [m for m in self.modules if m.moduleVoltage > 1]:
                 outstr = []
-                print(f"moduleID is {mod.moduleID}")
-
                 (val_strings, fmt_strings) = self.asDict(mod.moduleID, formats=True)
                 for key in val_strings:
                     outstr.append(f'{val_strings[key]:{fmt_strings[key]}}')
                 print(outstr)
                 
-
         if format == 'text': 
             m = 0
             for module in self.modules:
@@ -296,9 +288,6 @@ class vSystem:
                     print(cellLine)
     
         self.dataLock.release()
-
-
-
 
     def writeToInflux(self, fluxClient):
         self.dataLock.acquire()
@@ -321,8 +310,6 @@ class vSystem:
         self.dataLock.release()
 
 
-
-
 def parseArgs():
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--time_interval", type=int, default=10, help="seconds between subsequent runs")
@@ -333,18 +320,14 @@ def parseArgs():
     return parser.parse_args()
 
 
-
-
-
 if __name__ == '__main__':
     args = parseArgs()
-    sys = vSystem(1, 2, '/dev/ttyUSB0')
     load_dotenv()
     token = os.getenv('IFDB_TOKEN')
     org = os.getenv('IFDB_ORG')
     bucket = os.getenv('IFDB_BUCKET')
+    sys = vSystem(1, 2, '/dev/ttyUSB0')
     fluxClient = batt_influx.InfluxClient(token, org, bucket)
-
 
     run_num = 0
     while True:
@@ -352,7 +335,7 @@ if __name__ == '__main__':
         sys.newSysData.wait()
         sys.newSysData.clear()
         sys.printStats(format='csv')
-        # sys.writeToInflux(fluxClient)
+        sys.writeToInflux(fluxClient)
         if run_num < args.num_runs:
             time.sleep(args.time_interval)
         else:
